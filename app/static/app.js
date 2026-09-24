@@ -5,8 +5,12 @@ const api = async (url, opts = {}) => {
   const res = await fetch(url, opts);
   if (!res.ok) {
     let detail = res.statusText;
-    try { detail = (await res.json()).detail || detail; } catch (_) {}
-    throw new Error(detail);
+    let body = null;
+    try { body = await res.json(); detail = body.detail || detail; } catch (_) {}
+    const err = new Error(detail);
+    err.status = res.status;
+    err.body = body;
+    throw err;
   }
   return res.json();
 };
@@ -986,6 +990,149 @@ function gpsText(decimal, dms, ref) {
   const dir = ref ? ` ${escapeHtml(ref)}` : "";
   const dmsHtml = dms ? `<small>${escapeHtml(dms)}${dir}</small>` : "";
   return `${decimal}${dmsHtml ? "<br>" + dmsHtml : ""}`;
+}
+
+/* ---------------- 导出隐私副本（摆正 + 重编码 + 复查，全内存） ---------------- */
+
+$("#btn-privacy-export").addEventListener("click", async () => {
+  const file = $("#privacy-file").files[0];
+  const status = $("#privacy-status");
+  if (!file) return fail(status, "请先选择一张 PNG / JPEG 图片。");
+  if (!/^image\/(png|jpe?g)$/i.test(file.type)) {
+    return fail(status, "仅支持 PNG / JPEG 图片。");
+  }
+
+  const fd = new FormData();
+  fd.append("image", file);
+  busy(status, "正在按 EXIF 方向摆正像素、重编码 PNG 并复查元数据…");
+  $("#privacy-export-result").classList.add("hidden");
+  try {
+    const r = await api("/api/privacy-export", { method: "POST", body: fd });
+    renderPrivacyExport(r);
+    ok(status, "隐私副本导出并复查通过（全程未写盘、未创建任务）。");
+  } catch (err) {
+    if (err.body && err.body.recheck) {
+      renderPrivacyExport(err.body, true);
+    }
+    fail(status, err.message || "导出失败。");
+  }
+});
+
+function renderPrivacyExport(r, failed) {
+  const box = $("#privacy-export-result");
+  box.classList.remove("hidden");
+
+  const verdict = $("#pe-verdict");
+  if (failed) {
+    verdict.className = "pe-verdict fail";
+    verdict.textContent = "✘ 复查未通过，服务端未提供下载：" +
+      ((r.offenders || []).join("；") || "未知原因");
+  } else {
+    verdict.className = "pe-verdict ok";
+    verdict.textContent = "✔ 副本复查通过：未检出 EXIF / GPS / XMP / ICC / PNG 文本元数据";
+  }
+
+  const warnBox = $("#pe-warnings");
+  warnBox.innerHTML = "";
+  (r.original?.warnings || []).forEach((w) => {
+    const div = document.createElement("div");
+    div.className = "privacy-warn";
+    div.textContent = "⚠ " + w;
+    warnBox.appendChild(div);
+  });
+
+  const o = r.original || {};
+  $("#pe-time").innerHTML = o.date_time
+    ? `${escapeHtml(o.date_time)}${o.date_time_iso ? ` <small>(${escapeHtml(o.date_time_iso)})</small>` : ""}`
+    : "无";
+  $("#pe-make").textContent = o.camera_make || "无";
+  $("#pe-model").textContent = o.camera_model || "无";
+  if (o.gps) {
+    $("#pe-lat").innerHTML = gpsText(o.gps.latitude, o.gps.latitude_dms, o.gps.latitude_ref);
+    $("#pe-lon").innerHTML = gpsText(o.gps.longitude, o.gps.longitude_dms, o.gps.longitude_ref);
+  } else {
+    $("#pe-lat").textContent = "无";
+    $("#pe-lon").textContent = "无";
+  }
+  $("#pe-orient").textContent = r.orientation
+    ? (r.orientation.label || "—")
+    : "—";
+
+  const rc = r.recheck;
+  const checksBox = $("#pe-checks");
+  checksBox.innerHTML = "";
+  const checkLabels = {
+    png_structure: "PNG 结构合法且可重新解码",
+    no_exif_chunk: "无 EXIF（eXIf 块 / exif info）",
+    no_icc_chunk: "无 ICC 色彩配置（iCCP）",
+    no_text_chunks: "无 PNG 文本块（tEXt / zTXt / iTXt）",
+    exif_gps_absent: "重新解析无 EXIF 与 GPS",
+    no_xmp: "无 XMP 元数据",
+    dimensions_match: "尺寸与摆正后一致",
+    alpha_preserved: "透明通道保留一致",
+    pixels_lossless: "像素逐值无损（PNG 重编码）",
+  };
+  Object.entries(checkLabels).forEach(([key, label]) => {
+    const span = document.createElement("span");
+    const pass = rc && rc.checks && rc.checks[key];
+    span.className = "pe-chip " + (pass ? "ok" : "bad");
+    span.textContent = (pass ? "✔ " : "✘ ") + label;
+    checksBox.appendChild(span);
+  });
+
+  const copy = r.copy || rc || {};
+  $("#pe-copy-meta").textContent = rc
+    ? `${rc.format || copy.format || "PNG"} · ${rc.width ?? copy.width} × ${rc.height ?? copy.height}px · ${formatBytes(copy.bytes ?? 0)}`
+    : "—";
+  $("#pe-alpha").textContent = rc
+    ? (rc.has_alpha ? `已保留（模式 ${rc.mode}）` : "原图无透明通道，副本为 " + rc.mode)
+    : "—";
+  if (rc) {
+    const exifBad = rc.exif_present || rc.gps_present;
+    $("#pe-exif").innerHTML = exifBad
+      ? `<span class="pe-bad-text">仍存在 EXIF=${rc.exif_present} / GPS=${rc.gps_present}</span>`
+      : "<span class=\"pe-ok-text\">未检出</span>";
+    const metaBad = rc.icc_present || rc.xmp_present || rc.text_metadata_present;
+    $("#pe-meta-chunks").innerHTML = metaBad
+      ? `<span class="pe-bad-text">仍存在 ICC=${rc.icc_present} / XMP=${rc.xmp_present} / 文本=${rc.text_metadata_present}</span>`
+      : "<span class=\"pe-ok-text\">未检出</span>";
+    $("#pe-chunks").innerHTML = `<small>${escapeHtml((rc.chunks || []).join(" · "))}</small>`;
+  } else {
+    $("#pe-exif").textContent = "—";
+    $("#pe-meta-chunks").textContent = "—";
+    $("#pe-chunks").textContent = "—";
+  }
+  $("#pe-sha").innerHTML = copy.sha256
+    ? `<small>${escapeHtml(copy.sha256)}</small>`
+    : "—";
+
+  const dlBtn = $("#btn-pe-download");
+  if (!failed && r.download && r.download.data_url) {
+    dlBtn.classList.remove("hidden");
+    dlBtn.onclick = () => {
+      // data URL -> Blob 下载（避免超长 base64 地址栏问题）
+      fetch(r.download.data_url)
+        .then((resp) => resp.blob())
+        .then((blob) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = downloadName(r.filename);
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 4000);
+        });
+    };
+  } else {
+    dlBtn.classList.add("hidden");
+    dlBtn.onclick = null;
+  }
+}
+
+function downloadName(filename) {
+  const base = (filename || "privacy.png").replace(/\.[a-z0-9]+$/i, "");
+  return (base || "privacy") + ".privacy.png";
 }
 
 function formatBytes(n) {

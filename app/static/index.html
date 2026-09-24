@@ -235,7 +235,10 @@
         <span>待检查图片（仅 PNG / JPEG）</span>
         <input type="file" id="privacy-file" accept="image/png,image/jpeg" />
       </label>
-      <button class="primary privacy" id="btn-privacy">检查图片隐私信息</button>
+      <div class="btn-row privacy-btns">
+        <button class="primary privacy" id="btn-privacy">检查图片隐私信息</button>
+        <button class="primary export" id="btn-privacy-export">导出隐私副本</button>
+      </div>
       <div class="status" id="privacy-status"></div>
 
       <div id="privacy-result" class="privacy-box hidden">
@@ -249,6 +252,37 @@
           <dt>图片格式 / 尺寸</dt><dd id="pv-meta">—</dd>
         </dl>
         <small class="muted">本次检查未在服务端保存图片或 EXIF 元数据。</small>
+      </div>
+
+      <div id="privacy-export-result" class="privacy-box export-box hidden">
+        <div id="pe-verdict" class="pe-verdict"></div>
+        <div id="pe-warnings"></div>
+
+        <h4>原图识别结果</h4>
+        <dl class="privacy-dl">
+          <dt>拍摄时间</dt><dd id="pe-time">无</dd>
+          <dt>相机品牌</dt><dd id="pe-make">无</dd>
+          <dt>相机型号</dt><dd id="pe-model">无</dd>
+          <dt>纬度</dt><dd id="pe-lat">无</dd>
+          <dt>经度</dt><dd id="pe-lon">无</dd>
+          <dt>方向摆正</dt><dd id="pe-orient">—</dd>
+        </dl>
+
+        <h4>副本复查结果（服务端对生成文件重新解析）</h4>
+        <div id="pe-checks" class="pe-checks"></div>
+        <dl class="privacy-dl">
+          <dt>副本格式 / 尺寸</dt><dd id="pe-copy-meta">—</dd>
+          <dt>透明通道</dt><dd id="pe-alpha">—</dd>
+          <dt>EXIF / GPS</dt><dd id="pe-exif">—</dd>
+          <dt>XMP / ICC / 文本块</dt><dd id="pe-meta-chunks">—</dd>
+          <dt>PNG chunks</dt><dd id="pe-chunks">—</dd>
+          <dt>SHA-256</dt><dd id="pe-sha">—</dd>
+        </dl>
+        <button class="primary export" id="btn-pe-download">⬇ 下载隐私副本 PNG</button>
+        <small class="muted">
+          导出全程仅在服务端内存中完成：已按 EXIF Orientation 摆正像素并以全新 PNG 重编码，
+          不含 EXIF、GPS、XMP、ICC 及 PNG 文本元数据；不创建水印任务、不改写任何数据。
+        </small>
       </div>
     </section>
 

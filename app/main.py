@@ -21,6 +21,10 @@
                           数量/比例、投影四边形面积与边界均可信时返回四角、
                           覆盖率与标注预览，否则返回「无法定位」及原因
   POST /api/privacy-check  上传 PNG/JPEG -> 只读解析 EXIF 拍摄时间/相机/GPS（不落盘、不建任务）
+  POST /api/privacy-export 上传 PNG/JPEG -> EXIF Orientation 摆正像素 + 全新 PNG 重编码
+                          （清除 EXIF/GPS/XMP/ICC/PNG 文本，保留透明通道），导出前
+                          重新解析生成文件复查；复查不通过返回错误且不提供下载。
+                          全程内存，不创建/改写任何水印任务
   GET  /api/jobs/{id}/{kind}  任务文件下载（original/watermarked/target/marked）
   GET  /api/jobs/{id}/detections/{det_id}/{kind}  某次检测的输入快照 / 标注图
   POST /api/jobs/{id}/reports   选择一次或多次检测 -> 可验证 JSON 报告并追加归档
@@ -44,7 +48,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 from . import archive, autostrength, dctwm as wm
-from . import exifcheck, matrix, orientation, provenance
+from . import exifcheck, matrix, orientation, privacy_export, provenance
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -54,7 +58,7 @@ MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 MAX_DIM = 4096
 ALLOWED_KINDS = {"original", "watermarked", "target", "marked"}
 
-app = FastAPI(title="抗裁切水印实验台", version="1.5.0")
+app = FastAPI(title="抗裁切水印实验台", version="1.6.0")
 
 
 # ---------------------------------------------------------------- 任务存储
@@ -595,6 +599,44 @@ async def privacy_check(image: UploadFile = File(...)):
         **result,
         "stored": False,
     })
+
+
+@app.post("/api/privacy-export")
+async def export_privacy(image: UploadFile = File(...)):
+    """导出隐私副本（全内存）：EXIF Orientation 摆正 + 全新 PNG 重编码。
+
+    先按 EXIF Orientation 把像素真正旋转 / 镜像摆正，保留原有透明
+    通道，再以全新 PNG 重编码，不带入 EXIF / GPS / XMP / ICC 及
+    PNG 文本元数据；导出前重新解析生成文件复查，任一项不通过都
+    返回错误且响应中不含可下载副本。不创建 / 改写任何水印任务、
+    攻击记录与报告归档，上传字节与副本均不落盘。
+    """
+    data = await image.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="图片不能超过 16MB。")
+    if not data:
+        raise HTTPException(status_code=400, detail="上传内容为空。")
+    try:
+        result = privacy_export.export_privacy_copy(data)
+    except privacy_export.PrivacyCheckError as e:
+        # 图片本身无法解码或格式非 PNG/JPEG
+        raise HTTPException(status_code=400, detail=str(e))
+    except privacy_export.PrivacyExportError as e:
+        # 摆正后尺寸超 4096px 等前置条件不满足
+        raise HTTPException(status_code=400, detail=str(e))
+    except privacy_export.PrivacyCopyRecheckError as e:
+        # 复查仍发现被禁元数据 / 重编码结果异常：不提供下载
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "隐私副本导出复查未通过，已拒绝提供下载。",
+                "offenders": e.offenders,
+                **e.context,
+                "recheck": e.recheck,
+                "stored": False,
+            },
+        )
+    return JSONResponse({"filename": image.filename, **result})
 
 
 @app.get("/api/jobs/{job_id}/{kind}")

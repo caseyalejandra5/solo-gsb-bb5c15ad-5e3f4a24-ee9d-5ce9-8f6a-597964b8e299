@@ -761,6 +761,66 @@ button.primary.privacy:hover { box-shadow: 0 4px 18px rgba(124, 92, 255, 0.35); 
   word-break: break-all;
 }
 
+/* ---------- 导出隐私副本 ---------- */
+.privacy-btns { align-items: stretch; }
+.privacy-btns .primary { margin-top: 0; }
+
+button.primary.export {
+  background: linear-gradient(135deg, #2bb673, #1e8f5a);
+  flex: 1;
+}
+button.primary.export:hover { box-shadow: 0 4px 18px rgba(43, 182, 115, 0.35); }
+
+.export-box { margin-top: 12px; }
+.export-box h4 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  color: var(--text, #e8ecf4);
+}
+.pe-verdict {
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 13px;
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+.pe-verdict.ok {
+  color: #7ce8c8;
+  background: rgba(53, 208, 163, 0.1);
+  border: 1px solid rgba(53, 208, 163, 0.45);
+}
+.pe-verdict.fail {
+  color: #ff9c9c;
+  background: rgba(235, 70, 70, 0.1);
+  border: 1px solid rgba(235, 70, 70, 0.45);
+}
+.pe-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+.pe-chip {
+  font-size: 11.5px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+.pe-chip.ok {
+  color: #7ce8c8;
+  border-color: rgba(53, 208, 163, 0.45);
+  background: rgba(53, 208, 163, 0.08);
+}
+.pe-chip.bad {
+  color: #ff9c9c;
+  border-color: rgba(235, 70, 70, 0.45);
+  background: rgba(235, 70, 70, 0.08);
+}
+.pe-ok-text { color: #7ce8c8; }
+.pe-bad-text { color: #ff9c9c; }
+#btn-pe-download { width: 100%; margin: 10px 0 6px; }
+
 footer {
   text-align: center;
   color: #46536c;
