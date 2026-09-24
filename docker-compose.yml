@@ -1,0 +1,18 @@
+services:
+  watermark-bench:
+    build: .
+    image: wm-bench:latest
+    container_name: wm-bench
+    ports:
+      - "8000:8000"
+    volumes:
+      - wm-data:/data/wmbench
+    environment:
+      # 临时任务（上传图/含水印图/攻击图/标注图）保存目录
+      WM_DATA_DIR: /data/wmbench
+      # 最多保留的任务数，超出后自动清理最旧任务
+      WM_MAX_JOBS: "200"
+    restart: unless-stopped
+
+volumes:
+  wm-data:

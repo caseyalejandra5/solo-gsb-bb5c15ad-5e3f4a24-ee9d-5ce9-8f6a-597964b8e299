@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+tests/
+.git/
+data/
+*.png
+*.jpg
+!app/static/.gitkeep
