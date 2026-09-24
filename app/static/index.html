@@ -231,11 +231,20 @@
         <b>GPS 经纬度</b>（度分秒按 N/S、E/W 还原为带符号十进制度）。
         检查在内存中完成，<b>不保存图片或元数据、不创建任务</b>，结果仅返回给本次请求。
       </p>
+      <p class="muted">
+        也可一键<b>导出隐私副本</b>：服务端先按 EXIF Orientation <b>摆正像素</b>，再以
+        <b>全新 PNG 重编码</b>，保留原有<b>透明通道</b>，不带入 EXIF / GPS / XMP / ICC 及
+        PNG 文本元数据；导出前会<b>重新解析生成文件复查</b>，复查未通过则报错且不提供下载。
+        全程仅在内存中进行，不创建或改写水印任务。
+      </p>
       <label class="field">
         <span>待检查图片（仅 PNG / JPEG）</span>
         <input type="file" id="privacy-file" accept="image/png,image/jpeg" />
       </label>
-      <button class="primary privacy" id="btn-privacy">检查图片隐私信息</button>
+      <div class="btn-row">
+        <button class="primary privacy" id="btn-privacy">检查图片隐私信息</button>
+        <button class="ghost" id="btn-privacy-export">⬆ 导出隐私副本（摆正 + 全新 PNG）</button>
+      </div>
       <div class="status" id="privacy-status"></div>
 
       <div id="privacy-result" class="privacy-box hidden">
@@ -249,6 +258,27 @@
           <dt>图片格式 / 尺寸</dt><dd id="pv-meta">—</dd>
         </dl>
         <small class="muted">本次检查未在服务端保存图片或 EXIF 元数据。</small>
+      </div>
+
+      <div id="privacy-copy-box" class="privacy-copy-box hidden">
+        <h3>隐私副本复查结果</h3>
+        <div id="pv-copy-verdict" class="verify ok"></div>
+        <dl class="privacy-dl">
+          <dt>EXIF 方向</dt><dd id="pv-orient">—</dd>
+          <dt>像素摆正</dt><dd id="pv-orient-applied">—</dd>
+          <dt>副本格式 / 尺寸</dt><dd id="pv-copy-size">—</dd>
+          <dt>透明通道</dt><dd id="pv-copy-alpha">—</dd>
+          <dt>副本大小</dt><dd id="pv-copy-bytes">—</dd>
+          <dt>副本 SHA-256</dt><dd id="pv-copy-sha">—</dd>
+          <dt>EXIF 复查</dt><dd id="pv-recheck-exif">—</dd>
+          <dt>XMP / ICC 复查</dt><dd id="pv-recheck-color">—</dd>
+          <dt>PNG 文本块复查</dt><dd id="pv-recheck-text">—</dd>
+        </dl>
+        <button class="ghost" id="btn-download-privacy-copy">⬇ 下载隐私副本 PNG</button>
+        <small class="muted">
+          副本由服务端在本次请求内存中重新编码生成，未落盘、未创建水印任务；
+          下载内容即复查通过的同一份字节（SHA-256 一致）。
+        </small>
       </div>
     </section>
 

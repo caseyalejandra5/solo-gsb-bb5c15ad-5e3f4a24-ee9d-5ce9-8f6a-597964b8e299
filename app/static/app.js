@@ -22,6 +22,7 @@ const state = {
   markedUrl: null,
   detections: [],          // 当前任务页内累积的检测结果（可归档）
   report: null,            // 最近生成的归档报告
+  privacyCopyUrl: null,    // 最近一次导出的隐私副本 Blob URL（仅浏览器内存）
 };
 
 /* ---------------- 嵌入：手动 / 自动模式 ---------------- */
@@ -929,13 +930,23 @@ $("#btn-download-marked").addEventListener("click", () => {
 
 /* ---------------- 图片隐私检查（EXIF，只读不落盘） ---------------- */
 
-$("#btn-privacy").addEventListener("click", async () => {
+function readPrivacyFile(status) {
   const file = $("#privacy-file").files[0];
-  const status = $("#privacy-status");
-  if (!file) return fail(status, "请先选择一张 PNG / JPEG 图片。");
-  if (!/^image\/(png|jpe?g)$/i.test(file.type)) {
-    return fail(status, "仅支持 PNG / JPEG 图片。");
+  if (!file) {
+    fail(status, "请先选择一张 PNG / JPEG 图片。");
+    return null;
   }
+  if (!/^image\/(png|jpe?g)$/i.test(file.type)) {
+    fail(status, "仅支持 PNG / JPEG 图片。");
+    return null;
+  }
+  return file;
+}
+
+$("#btn-privacy").addEventListener("click", async () => {
+  const status = $("#privacy-status");
+  const file = readPrivacyFile(status);
+  if (!file) return;
 
   const fd = new FormData();
   fd.append("image", file);
@@ -948,6 +959,90 @@ $("#btn-privacy").addEventListener("click", async () => {
     $("#privacy-result").classList.add("hidden");
     fail(status, err.message);
   }
+});
+
+$("#btn-privacy-export").addEventListener("click", async () => {
+  const status = $("#privacy-status");
+  const file = readPrivacyFile(status);
+  if (!file) return;
+
+  const fd = new FormData();
+  fd.append("image", file);
+  busy(status, "正在按 EXIF 方向摆正像素、全新 PNG 重编码并复查元数据…");
+  try {
+    const r = await api("/api/privacy-export", { method: "POST", body: fd });
+    renderPrivacyResult(r.source ? { ...r.source, bytes: r.bytes } : r);
+    renderPrivacyCopy(r);
+    const o = r.orientation || {};
+    ok(status,
+      "隐私副本已生成并复查通过：无 EXIF / GPS / XMP / ICC / PNG 文本元数据" +
+      (o.applied ? `，像素已按方向标签（${o.label}）摆正。` : "（原图方向正常，无需摆正）。") +
+      "全程内存处理，未创建任务。");
+  } catch (err) {
+    $("#privacy-copy-box").classList.add("hidden");
+    state.privacyCopyUrl = null;
+    fail(status, err.message);
+  }
+});
+
+function renderPrivacyCopy(r) {
+  const box = $("#privacy-copy-box");
+  box.classList.remove("hidden");
+  const copy = r.copy || {};
+  const recheck = copy.recheck || {};
+  const orient = r.orientation || {};
+
+  const verdict = $("#pv-copy-verdict");
+  verdict.className = "verify ok";
+  verdict.textContent =
+    "✔ 复查通过：重新解析生成文件，未发现 EXIF / GPS / XMP / ICC 与 PNG 文本元数据";
+
+  $("#pv-orient").textContent =
+    `${orient.tag} · ${orient.label ?? "—"}`;
+  $("#pv-orient-applied").innerHTML = orient.applied
+    ? "已按 EXIF Orientation 摆正像素"
+    : '<span class="muted">无需摆正（方向正常 / 无方向标签）</span>';
+  $("#pv-copy-size").textContent =
+    `${copy.format} · ${copy.width} × ${copy.height}px · 模式 ${copy.mode}`;
+  $("#pv-copy-alpha").innerHTML = copy.alpha_preserved
+    ? "已保留（RGBA / 透明）"
+    : '<span class="muted">原图无透明通道（不透明）</span>';
+  $("#pv-copy-bytes").textContent = formatBytes(copy.bytes);
+  $("#pv-copy-sha").innerHTML = `<small>${escapeHtml(copy.sha256 || "")}</small>`;
+
+  const rawHits = recheck.raw_chunk_hits || [];
+  const parsedHits = recheck.parsed_hits || [];
+  const hitText = (hits) => hits.length
+    ? `<span class="pv-bad">✘ 残留：${escapeHtml(hits.join(", "))}</span>`
+    : "✔ 未发现";
+  $("#pv-recheck-exif").innerHTML = hitText(
+    rawHits.concat(parsedHits).filter((h) => /exif/i.test(h)));
+  $("#pv-recheck-color").innerHTML = hitText(
+    rawHits.concat(parsedHits).filter((h) => /icc|cHRM|gAMA|sRGB|sBIT/i.test(h)));
+  $("#pv-recheck-text").innerHTML = hitText(
+    rawHits.concat(parsedHits).filter((h) => /tEXt|zTXt|iTXt|xmp|comment/i.test(h)));
+
+  // base64 副本仅驻留在浏览器内存，转为 Blob 后下载，服务端不落盘
+  try {
+    const bin = atob(copy.png_base64 || "");
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) u8[i] = bin.charCodeAt(i);
+    const blob = new Blob([u8], { type: "image/png" });
+    if (state.privacyCopyUrl) URL.revokeObjectURL(state.privacyCopyUrl);
+    state.privacyCopyUrl = URL.createObjectURL(blob);
+  } catch (e) {
+    state.privacyCopyUrl = null;
+  }
+}
+
+$("#btn-download-privacy-copy").addEventListener("click", () => {
+  if (!state.privacyCopyUrl) return;
+  const a = document.createElement("a");
+  a.href = state.privacyCopyUrl;
+  a.download = "privacy-copy.png";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 });
 
 function renderPrivacyResult(r) {

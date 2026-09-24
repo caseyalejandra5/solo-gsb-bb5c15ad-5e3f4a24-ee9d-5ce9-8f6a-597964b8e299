@@ -21,6 +21,11 @@
                           数量/比例、投影四边形面积与边界均可信时返回四角、
                           覆盖率与标注预览，否则返回「无法定位」及原因
   POST /api/privacy-check  上传 PNG/JPEG -> 只读解析 EXIF 拍摄时间/相机/GPS（不落盘、不建任务）
+  POST /api/privacy-export 上传 PNG/JPEG -> 先按 EXIF Orientation 摆正像素，再以全新
+                          PNG 重编码（保留透明通道、不带入 EXIF/GPS/XMP/ICC/PNG 文本），
+                          导出前重新解析生成文件复查元数据；全程内存、不建任务、
+                          不改写水印任务，通过时返回原图隐私字段、摆正信息与
+                          base64 隐私副本供页面下载；复查失败返回 500、不提供下载
   GET  /api/jobs/{id}/{kind}  任务文件下载（original/watermarked/target/marked）
   GET  /api/jobs/{id}/detections/{det_id}/{kind}  某次检测的输入快照 / 标注图
   POST /api/jobs/{id}/reports   选择一次或多次检测 -> 可验证 JSON 报告并追加归档
@@ -588,6 +593,37 @@ async def privacy_check(image: UploadFile = File(...)):
         result = exifcheck.analyze_privacy(data)
     except exifcheck.PrivacyCheckError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    return JSONResponse({
+        "filename": image.filename,
+        "content_type": image.content_type,
+        "bytes": len(data),
+        **result,
+        "stored": False,
+    })
+
+
+@app.post("/api/privacy-export")
+async def privacy_export(image: UploadFile = File(...)):
+    """导出隐私副本：EXIF Orientation 摆正 + 全新 PNG 重编码 + 导出前复查。
+
+    全程仅在内存中进行：不创建或改写任何水印任务、不写数据目录与归档；
+    原图的拍摄时间 / 相机 / GPS 只读解析结果随响应返回。服务端对生成的
+    PNG 重新解析并扫描 PNG 原始数据块，若仍含 EXIF / GPS / XMP / ICC /
+    tEXt·zTXt·iTXt 文本元数据，返回 500 且不提供副本；复查通过时副本以
+    base64 随本次响应返回（不落盘），由页面提供下载。
+    """
+    data = await image.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="图片不能超过 16MB。")
+    if not data:
+        raise HTTPException(status_code=400, detail="上传内容为空。")
+    try:
+        result = exifcheck.build_privacy_copy(data)
+    except exifcheck.PrivacyCheckError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except exifcheck.PrivacyExportError as e:
+        # 服务端自身的净化 / 复查失败：不提供下载，不静默放行
+        raise HTTPException(status_code=500, detail=str(e))
     return JSONResponse({
         "filename": image.filename,
         "content_type": image.content_type,

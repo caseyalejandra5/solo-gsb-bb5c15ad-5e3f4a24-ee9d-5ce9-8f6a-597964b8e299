@@ -35,6 +35,8 @@ docker compose up -d --build
 与「**◎ 传播副本来源定位**」（同一端口、同一容器，无需额外服务或端口；
 compose 配置保持不变）。访问入口与地址：**http://localhost:8000**。
 「① 嵌入水印」面板内可直接切换 **手动选强度 / 自动选强度** 两种模式。
+页面最下方的「🔒 图片隐私检查（EXIF）」面板除只读检查外，还可
+**导出隐私副本**（EXIF 方向摆正 + 全新 PNG 重编码 + 导出前复查，全程内存）。
 
 停止 / 清理：
 
@@ -207,6 +209,33 @@ WM_DATA_DIR=./data uvicorn app.main:app --host 0.0.0.0 --port 8000
 并以黄色警告条提示。检查全程在内存中完成：**不保存图片或元数据、不创建任务**，
 结果仅随当前 HTTP 响应返回，不影响水印任务、攻击记录与报告归档。
 
+### 导出隐私副本（EXIF 摆正 + 全新 PNG 重编码）
+
+同一面板内点击「**导出隐私副本**」，服务端对上传的 **PNG / JPEG** 依次执行
+（**全程只在内存中进行，不创建或改写水印任务、不写数据目录与归档**）：
+
+1. **按 EXIF Orientation 摆正像素**：采用与 `ImageOps.exif_transpose` 完全一致的
+   8 向映射（含镜像翻转），把相机方向标签固化进像素；方向标签缺失 / 损坏 / 越界
+   一律按「正常」处理，不阻断导出；
+2. **以全新 PNG 重编码**：用摆正后的原始像素构造全新 `Image` 对象（空 `info`、
+   不传任何 encoderinfo），因此 Pillow 只会写 `IHDR / IDAT（/tRNS /PLTE）/ IEND`；
+   **保留原有透明通道**（RGBA / LA 与调色板透明 P→RGBA），JPEG 的 CMYK/YCbCr 等
+   模式归一化为 RGB；**不带入 EXIF / GPS / XMP / ICC（iCCP）及 PNG 文本元数据
+   （tEXt / zTXt / iTXt）**；
+3. **导出前重新解析生成文件复查**：对生成的 PNG 字节同时做 **Pillow 重新解析**
+   （`getexif()` / `info` 中的 `exif`、`icc_profile`、`XML:com.adobe.xmp`、
+   `comment`）与 **PNG 原始数据块扫描**（`eXIf`、`iCCP`、`cHRM/gAMA/sRGB/sBIT`、
+   `tEXt/zTXt/iTXt`）；**任一复查项命中即返回错误、不提供下载**。
+
+复查通过时，页面在原有只读检查结果（拍摄时间、相机、GPS）下方显示：
+原图识别到的 EXIF 方向标签与是否摆正、副本格式 / 尺寸 / 模式、透明通道保留情况、
+副本字节数与 SHA-256，以及 EXIF / XMP·ICC / PNG 文本三类复查结果；
+副本以 base64 随本次响应返回（**服务端不落盘**），由浏览器转为 Blob 后
+**下载 `privacy-copy.png`**，下载字节的 SHA-256 与页面显示一致。
+
+对应接口：`POST /api/privacy-export`（multipart：`image`，仅 PNG / JPEG，≤ 16MB）。
+原只读接口 `POST /api/privacy-check` 行为完全不变，两个接口互相独立。
+
 ### 检测报告可验证归档
 
 检测结果面板内可**勾选一次或多次检测结果**生成规范化 JSON 检测报告（归档）：
@@ -354,6 +383,7 @@ WM_DATA_DIR=./data uvicorn app.main:app --host 0.0.0.0 --port 8000
 | POST | `/api/detect` | multipart：上传 `image` **或**传 `job_id`，返回文本、置信度、指标、检测记录 ID 与标注图 URL；独立上传可加 `auto_orient=true` 启用 8 方向自动检索（原向 / 90 / 180 / 270° + 水平镜像四方向），响应附带 `orientation_search`（入选方向、候选摘要、冲突），入选方向标注图已逆变换回上传图坐标 |
 | POST | `/api/jobs/{id}/robustness-matrix` | JSON：`{"jpeg_qualities": [90,50,30], "crop_fractions": [1.0,0.75,0.5]}`（各 1–3 个、不可重复；质量 20–100、比例 0.30–1.00）。**只读**：从同一份含水印原图为每格独立「先裁切后压缩」再调用现有检测器，逐格返回恢复文本 / 与原文是否一致 / 置信度与同步指标，并给出只按实测成功格计算的 `boundary`（二维最严成功边界，不做相邻推断）；不写 `target.png`、不改攻击历史、不产生检测记录与归档 |
 | POST | `/api/privacy-check` | multipart：上传 PNG/JPEG `image`，**只读**解析 EXIF 拍摄时间、相机品牌/型号、GPS（带符号十进制度）；不落盘、不建任务，字段缺失为 `null`，EXIF 损坏返回 200 + `warnings` |
+| POST | `/api/privacy-export` | multipart：上传 PNG/JPEG `image`，先按 EXIF Orientation 摆正像素，再以**全新 PNG** 重编码（保留透明通道；不带入 EXIF/GPS/XMP/ICC/tEXt·zTXt·iTXt），导出前对生成字节做 Pillow 重新解析 + PNG 数据块扫描双重复查；全程内存、不落盘、不建任务。通过返回原图隐私字段、`orientation`、副本字节数/SHA-256/`recheck` 与 base64 `png_base64`；复查残留元数据返回 **500** 且不提供副本，格式不支持 **400**，超过 16MB **413** |
 | POST | `/api/jobs/{id}/locate` | 传播副本来源定位（**只读**，multipart：`image`）：以任务 `watermarked.png` 为参照，SIFT 特征匹配 + Lowe 比率 + RANSAC 单应估计上传图四角在参照图中的位置；内点数量 / 比例、投影四边形凸性 / 面积 / 边界、重投影误差全部通过时返回 `located=true`、`quad` 四角坐标、`coverage` 覆盖率与内联 JPEG `preview_data_url`；否则 **200 + `located=false`** 与 `reason` / `failed_check`，不返回伪位置。不写任务文件、不产生检测记录与归档；任务不存在 / upload_only 轻量任务返回 404 |
 | GET | `/api/jobs/{id}/{kind}` | 下载 `original` / `watermarked` / `target` / `marked` PNG |
 | GET | `/api/jobs/{id}/detections/{det_id}/{kind}` | 下载某次检测的 `source`（检测输入快照）/ `marked`（标注图）PNG |
@@ -569,6 +599,40 @@ WM_DATA_DIR=./data uvicorn app.main:app --host 0.0.0.0 --port 8000
 > `exif_ok=false` 并在 `warnings` 中说明原因；只有图片本身无法解码或不是
 > PNG/JPEG 才返回 **400**，文件超过 16MB 返回 **413**。
 
+隐私副本导出响应（节选；`source` 即上面隐私检查的完整结果；
+`png_base64` 为省略后的 base64 字符串）：
+
+```json
+{
+  "filename": "photo.jpg",
+  "bytes": 184320,
+  "stored": false,
+  "source": {
+    "format": "JPEG", "width": 4032, "height": 3024,
+    "date_time": "2026:09:23 12:34:56",
+    "camera_make": "AcmeCam", "camera_model": "Model X-100",
+    "gps": { "latitude": 31.2625, "longitude": 121.5 }
+  },
+  "orientation": { "tag": 6, "label": "顺时针旋转 90°（6）", "applied": true },
+  "copy": {
+    "format": "PNG", "width": 3024, "height": 4032, "mode": "RGB",
+    "alpha_preserved": false,
+    "bytes": 9704,
+    "sha256": "9c2f…",
+    "png_base64": "iVBORw0KGgo…",
+    "recheck": {
+      "clean": true, "format": "PNG",
+      "raw_chunk_hits": [],
+      "parsed_hits": []
+    }
+  }
+}
+```
+
+> 复查未通过（生成文件仍含禁止元数据）时返回 **500** 且响应中**不含副本字节**；
+> 仅支持 PNG/JPEG（其它格式 **400**），单文件上限 **16MB**（**413**）。
+> 该接口不读取、不创建、不改写任何水印任务与归档，数据目录前后保持不变。
+
 ---
 
 ## 五、配置项（环境变量）
@@ -605,9 +669,9 @@ compose 默认把数据目录持久化到命名卷 `wm-data`；归档报告与�
 │   ├── matrix.py         # 鲁棒性矩阵：质量×裁切逐格「先裁切后压缩」评测 / 实测成功格二维最严边界（只读、不落盘）
 │   ├── orientation.py    # 独立上传可选：8 方向（旋转 + 水平镜像）自动检索 / 载荷校验取舍 / 标注图逆变换
 │   ├── provenance.py     # 传播副本来源定位（只读）：SIFT 特征 + Lowe 比率 + RANSAC 单应 / 四角·覆盖率·标注预览 / 几何门限不通过则明确「无法定位」
-│   ├── exifcheck.py      # 图片隐私检查：只读解析 EXIF 拍摄时间 / 相机 / GPS（损坏不阻断、不落盘）
+│   ├── exifcheck.py      # 图片隐私检查 + 隐私副本导出：只读解析 EXIF；EXIF 方向摆正 + 全新 PNG 重编码 + 导出前复查（不落盘、不建任务）
 │   ├── archive.py        # 检测报告：规范化 JSON / SHA-256 清单 / 仅追加哈希链归档 / 校验
-│   ├── main.py           # FastAPI：任务存储、手动/自动嵌入、攻击/检测/鲁棒性矩阵/来源定位/隐私检查/报告接口、静态资源
+│   ├── main.py           # FastAPI：任务存储、手动/自动嵌入、攻击/检测/鲁棒性矩阵/来源定位/隐私检查与隐私副本导出/报告接口、静态资源
 │   └── static/
 │       ├── index.html    # 单页界面（嵌入含手动/自动选强度 / 攻击 / 鲁棒性矩阵 / 来源定位 / 检测 / 隐私检查 / 归档 八区）
 │       ├── style.css
@@ -619,6 +683,7 @@ compose 默认把数据目录持久化到命名卷 `wm-data`；归档报告与�
 │   ├── test_orientation.py # 自动方向检索：8 向枚举 / 同分取舍 / 冲突 / 逆变换 / 归档
 │   ├── test_provenance.py  # 传播副本来源定位：四角精度（裁切/缩放/转存）/ 无关图·平坦图拒绝 / 几何门限 / 只读不改写 / 接口
 │   ├── test_privacy.py   # 隐私检查接口：EXIF 解析 / DMS 还原 / 缺失与损坏 / 不落盘不阻断
+│   ├── test_privacy_export.py # 隐私副本导出：EXIF 方向摆正 / 全新 PNG 重编码 / 透明通道保留 / 复查扫描 / 不落盘不建任务
 │   └── test_reports.py   # 报告归档接口与清单/哈希链校验（篡改、缺失、断链）
 ├── requirements.txt
 ├── Dockerfile
@@ -656,6 +721,10 @@ archive.log.jsonl                     # 仅追加归档记录（哈希链）
 - **图片隐私检查为纯只读操作**：图片与 EXIF 元数据都不写盘、不入库，
   仅在请求处理期间驻留内存，结果只返回给当前请求，不创建任务、不写入攻击记录与归档。
   照片分享前建议先用该功能确认 GPS 等敏感元数据是否需要清除。
+- **导出隐私副本同样为纯内存操作**：摆正与重编码全程在内存完成，服务端不落盘、
+  不创建或改写水印任务；副本字节仅在复查通过后随本次响应返回（base64），
+  由浏览器直接下载；复查发现任何 EXIF / GPS / XMP / ICC / PNG 文本元数据残留时
+  返回错误、不提供下载。
 - **传播副本来源定位同样为纯只读操作**：上传副本与参照图都只在内存中参与特征匹配，
   不写任务文件（`meta.json` / `target.png` 等）、不产生检测记录与归档；
   几何门限任一不通过时只返回「无法定位」及原因，绝不返回推测性坐标。
